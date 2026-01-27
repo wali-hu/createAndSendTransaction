@@ -30,44 +30,7 @@ const payer = Keypair.fromSecretKey(bs58.decode(senderSecretKey));
 const recipient = new PublicKey(receiverPublicKey);
 
 /*
-2. Fund Payer Account:
-
-Ensure payer has sufficient SOL before creating transaction.
-*/
-
-async function fundPayerIfNeeded() {
-  const balance = await connection.getBalance(payer.publicKey);
-  console.log('Current balance:', balance, 'lamports');
-
-  if (balance < 0.5 * LAMPORTS_PER_SOL) {
-    console.log('Requesting airdrop of 1 SOL...');
-    let retries = 3;
-    let sig;
-    
-    while (retries > 0) {
-      try {
-        sig = await connection.requestAirdrop(payer.publicKey, 1 * LAMPORTS_PER_SOL);
-        await connection.confirmTransaction(sig, 'confirmed');
-        console.log('Airdrop signature:', sig);
-        break;
-      } catch (error) {
-        retries--;
-        if (retries > 0) {
-          console.log(`Airdrop failed. Retrying in 5 seconds... (${retries} attempts left)`);
-          await new Promise(resolve => setTimeout(resolve, 5000));
-        } else {
-          console.error('Airdrop failed after multiple retries:', error);
-          throw error;
-        }
-      }
-    }
-  }
-}
-
-await fundPayerIfNeeded();
-
-/*
-3. Create Transfer Instruction:
+2. Create Transfer Instruction:
 
 Yeha Internally,
 SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
@@ -89,7 +52,7 @@ const transferInstruction = SystemProgram.transfer({
 });
 
 /*
-4. Transaction Object:
+3. Transaction Object:
 
 Under the hood: Transaction ek container hai jo multiple TransactionInstruction objects hold kar sakta hai.
 
@@ -102,7 +65,7 @@ Payer, blockhash, signatures abhi set nahi huay.
 
 const transaction = new Transaction();
 
-// 4.1 Instruction
+// 3.1 Instruction
 transaction.add(transferInstruction);
 
 /*
@@ -113,7 +76,7 @@ Payer, blockhash, signatures abhi set nahi huay.
 
 */
 
-// 4.2 Recent blockhash set karna zaroori hai taaki transaction valid ho.
+// 3.2 Recent blockhash set karna zaroori hai taaki transaction valid ho.
 const lastestBlockhash = await connection.getLatestBlockhash('confirmed');
 
 /*
@@ -128,7 +91,7 @@ Old API getRecentBlockhash() tha, ab getLatestBlockhash recommended hai.
 
 console.log('Recent blockhah:', lastestBlockhash.blockhash);
 
-// 4.3 Manually Transaction ke fields set krna
+// 3.3 Manually Transaction ke fields set karna
 transaction.recentBlockhash = lastestBlockhash.blockhash;
 transaction.feePayer = payer.publicKey;
 
@@ -147,7 +110,7 @@ transaction.signatures: abhi empty / placeholder hai.
 
 */
 
-// 5. Sign Transaction
+// 4. Sign Transaction
 transaction.sign(payer);
 
 /*
@@ -172,7 +135,7 @@ transaction.sign(payer);
 
 */
 
-// 6. Raw serialize + send
+// 5. Raw serialize + send
 
 const rawTransaction = transaction.serialize(); // Buffer of full tx data: Yeh buffer Network ko bheja jata hai via sendRawTransaction.
 
@@ -181,7 +144,7 @@ const txSignature  = await connection.sendRawTransaction(rawTransaction, {
 });
 console.log('Submitted transaction siganture:', txSignature);
 
-// 7. Confirm Transaction
+// 6. Confirm Transaction
 
 const confirmation = await connection.confirmTransaction(
 {
