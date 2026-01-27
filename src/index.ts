@@ -7,6 +7,9 @@ import {
     LAMPORTS_PER_SOL, //  SOL → lamports conversion constant.
     clusterApiUrl,    // cluster ke RPC URL ko get karne ke liye.
 } from '@solana/web3.js';
+import bs58 from 'bs58'; // Base58 encoding/decoding ke liye.
+import dotenv from 'dotenv';
+dotenv.config(); 
 
 /* 
 1. Devnet pe connect 
@@ -16,48 +19,18 @@ Under the hood: Connection WebSocket + HTTP RPC clients internally create karta 
 */
 const connection = new Connection(clusterApiUrl('devnet'), 'confirmed');
 
-/*
-2. New Keypair: 
+const senderSecretKey = process.env.SENDER_SECRET_KEY;
+const receiverPublicKey = process.env.RECEIVER_PUBLIC_KEY;
 
-payer.publicKey → PublicKey object
-payer.secretKey → Uint8Array(64) (ed25519 private + public key bytes)
-
-*/
-const payer = Keypair.generate();
-console.log('Payer Public Key:', payer.publicKey.toBase58());
-
-/*
-3. Airdrop SOL:
-
-Under the hood: connection.requestAirdrop() internally sendRequest('requestAirdrop', [pubkey, lamports]) karta hai.
-
-getBalance(pubkey) → lamports
-requestAirdrop(pubkey, amount) → system program ke through faucet tx send hoti hai.
-
-*/
-
-async function fundPayerIfNeeded() {
-  const balance = await connection.getBalance(payer.publicKey);
-  console.log('Current balance:', balance, 'lamports');
-
-  if (balance < 0.5 * LAMPORTS_PER_SOL) {
-    console.log('Requesting airdrop of 1 SOL...');
-    const sig = await connection.requestAirdrop(payer.publicKey, 1 * LAMPORTS_PER_SOL);
-    await connection.confirmTransaction(sig, 'confirmed');
-    console.log('Airdrop signature:', sig);
-  }
+if (!senderSecretKey || !receiverPublicKey) {
+  throw new Error('Missing required environment variables: SENDER_SECRET_KEY and RECEIVER_PUBLIC_KEY');
 }
- 
-/*
-Transaction create karne se pehle payer account ko SOL se fund karna zaroori hai:
-Is k bina, transaction simulation fail ho jaye gi is error k sath "Attempt to debit an account but found no record of a prior credit".
 
-*/
-
-await fundPayerIfNeeded();
+const payer = Keypair.fromSecretKey(bs58.decode(senderSecretKey));
+const recipient = new PublicKey(receiverPublicKey);
 
 /*
-4. Create Transfer Instruction:
+2. Create Transfer Instruction:
 
 Yeha Internally,
 SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
@@ -72,9 +45,7 @@ SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
 
 */
 
-const recipient = new PublicKey('8oqK9tb7QREwG9w3JRZuvWvaS9K7YBtyY2eeCBVEQXmV');
-
-const tranferInstruction = SystemProgram.transfer({
+const transferInstruction = SystemProgram.transfer({
     fromPubkey: payer.publicKey,
     toPubkey: recipient,
     lamports: 0.1 * LAMPORTS_PER_SOL,
@@ -95,7 +66,7 @@ Payer, blockhash, signatures abhi set nahi huay.
 const transaction = new Transaction();
 
 // 5.1 Instruction
-transaction.add(tranferInstruction);
+transaction.add(transferInstruction);
 
 /*
 Transaction ke andar ab:
