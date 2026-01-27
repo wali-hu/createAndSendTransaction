@@ -49,6 +49,16 @@ async function fundPayerIfNeeded() {
 }
 
 /*
+3.1. Fund payer account with SOL before creating transaction:
+
+This ensures payer has sufficient balance to cover the transfer amount and transaction fees.
+Without this, the transaction simulation will fail with "Attempt to debit an account but found no record of a prior credit".
+
+*/
+
+await fundPayerIfNeeded();
+
+/*
 4. Create Transfer Instruction:
 
 Yeha Internally,
