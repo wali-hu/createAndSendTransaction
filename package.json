@@ -1,5 +1,5 @@
 {
   "dependencies": {
-    "@solana-program/system": "^0.10.0"
+    "@solana/web3.js": "^1.98.4"
   }
 }
