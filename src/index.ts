@@ -47,12 +47,10 @@ async function fundPayerIfNeeded() {
     console.log('Airdrop signature:', sig);
   }
 }
-
+ 
 /*
-3.1. Fund payer account with SOL before creating transaction:
-
-This ensures payer has sufficient balance to cover the transfer amount and transaction fees.
-Without this, the transaction simulation will fail with "Attempt to debit an account but found no record of a prior credit".
+Transaction create karne se pehle payer account ko SOL se fund karna zaroori hai:
+Is k bina, transaction simulation fail ho jaye gi is error k sath "Attempt to debit an account but found no record of a prior credit".
 
 */
 
