@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@solana-program/system": "^0.10.0"
+  }
+}
