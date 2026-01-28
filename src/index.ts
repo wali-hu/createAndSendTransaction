@@ -68,14 +68,6 @@ const transaction = new Transaction();
 // 3.1 Instruction
 transaction.add(transferInstruction);
 
-/*
-Transaction ke andar ab:
-
-instructions: TransactionInstruction[] ki list.
-Payer, blockhash, signatures abhi set nahi huay.
-
-*/
-
 // 3.2 Recent blockhash set karna zaroori hai taaki transaction valid ho.
 const lastestBlockhash = await connection.getLatestBlockhash('confirmed');
 
