@@ -6,6 +6,7 @@ import {
     Transaction,      // jo actual transaction container hai.
     LAMPORTS_PER_SOL, //  SOL → lamports conversion constant.
     clusterApiUrl,    // cluster ke RPC URL ko get karne ke liye.
+    TransactionInstruction, // Manually instruction create karne ke liye.
 } from '@solana/web3.js';
 import bs58 from 'bs58'; // Base58 encoding/decoding ke liye.
 import dotenv from 'dotenv';
@@ -32,6 +33,14 @@ const recipient = new PublicKey(receiverPublicKey);
 /*
 2. Create Transfer Instruction:
 
+```
+ const transferInstruction = SystemProgram.transfer({
+     fromPubkey: payer.publicKey,
+     toPubkey: recipient,
+     lamports: 0.1 * LAMPORTS_PER_SOL,
+ });
+```
+
 Yeha Internally,
 SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
 
@@ -45,11 +54,51 @@ SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
 
 */
 
-const transferInstruction = SystemProgram.transfer({
-    fromPubkey: payer.publicKey,
-    toPubkey: recipient,
-    lamports: 0.1 * LAMPORTS_PER_SOL,
+// 2.1: Instruction index (discriminant) define karo.
+// System Program ke liye standard enum hota hai:
+// 0: CreateAccount
+// 1: Assign
+// 2: Transfer
+// etc...
+const TRANSFER_INSTRUCTION_INDEX = 2;
+
+// 2.2: Transfer amount ko pure lamports mein calculate karo.
+const lamportsToSend = 0.1 * LAMPORTS_PER_SOL;
+
+// 2.3: Instruction data Buffer create karo.
+// Layout: [u32: instruction_index][u64: lamports]
+// Total: 4 bytes (u32) + 8 bytes (u64) = 12 bytes
+const data = Buffer.alloc(4 + 8);
+
+// u32 little-endian mein likho (instruction index = 2)
+data.writeUInt32LE(TRANSFER_INSTRUCTION_INDEX, 0);
+
+// u64 little-endian mein lamports likhna:
+// Node.js Buffer mein direct u64 helper methods naye versions mein aagaye hain (writeBigUInt64LE).
+// Agar tumhara runtime support karta hai:
+(data as any).writeBigUInt64LE(BigInt(lamportsToSend), 4);
+
+// Agar kisi environment mein writeBigUInt64LE na ho to manually 8 bytes shift karke bhi likh sakte ho,
+// lekin yahan simple rakhtay hain.
+
+// 2.4: Ab TransactionInstruction manually bana rahe hain:
+const transferInstruction = new TransactionInstruction({
+    programId: SystemProgram.programId, // 11111111111111111111111111111111
+    keys: [
+        {
+            pubkey: payer.publicKey,
+            isSigner: true,   // fromPubkey ko sign karna zaroori hai kyunki uska balance debit hoga
+            isWritable: true, // SOL balance change hoga
+        },
+        {
+            pubkey: recipient,
+            isSigner: false,  // recipient ko sign karne ki zaroorat nahi
+            isWritable: true, // uska balance bhi update hoga
+        },
+    ],
+    data, // yeh wahi 12-byte buffer hai: [u32 instruction_index][u64 lamports]
 });
+
 
 /*
 3. Transaction Object:
