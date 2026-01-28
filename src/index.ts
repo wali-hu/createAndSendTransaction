@@ -30,35 +30,16 @@ if (!senderSecretKey || !receiverPublicKey) {
 const payer = Keypair.fromSecretKey(bs58.decode(senderSecretKey));
 const recipient = new PublicKey(receiverPublicKey);
 
-/*
-2. Create Transfer Instruction:
-
-```
- const transferInstruction = SystemProgram.transfer({
-     fromPubkey: payer.publicKey,
-     toPubkey: recipient,
-     lamports: 0.1 * LAMPORTS_PER_SOL,
- });
-```
-
-Yeha Internally,
-SystemProgram.transfer(...) ek TransactionInstruction object return karta hai:
-
-→ programId: SystemProgram.programId (11111111111111111111111111111111)
-
-→ keys: [{ pubkey, isSigner, isWritable }, ...]
-    fromPubkey → isSigner: true, isWritable: true
-    toPubkey → isSigner: false, isWritable: true
-
-→ data: Buffer: Binary encoding of instruction enum = Transfer (2) + u64 lamports
-
-*/
+// =============================
+// 2. Manual SystemProgram.transfer
+// =============================
 
 // 2.1: Instruction index (discriminant) define karo.
 // System Program ke liye standard enum hota hai:
 // 0: CreateAccount
 // 1: Assign
 // 2: Transfer
+// 8: Allocate
 // etc...
 const TRANSFER_INSTRUCTION_INDEX = 2;
 
@@ -68,18 +49,13 @@ const lamportsToSend = 0.1 * LAMPORTS_PER_SOL;
 // 2.3: Instruction data Buffer create karo.
 // Layout: [u32: instruction_index][u64: lamports]
 // Total: 4 bytes (u32) + 8 bytes (u64) = 12 bytes
-const data = Buffer.alloc(4 + 8);
+const transferData = Buffer.alloc(4 + 8);
 
 // u32 little-endian mein likho (instruction index = 2)
-data.writeUInt32LE(TRANSFER_INSTRUCTION_INDEX, 0);
+transferData.writeUInt32LE(TRANSFER_INSTRUCTION_INDEX, 0);
 
 // u64 little-endian mein lamports likhna:
-// Node.js Buffer mein direct u64 helper methods naye versions mein aagaye hain (writeBigUInt64LE).
-// Agar tumhara runtime support karta hai:
-(data as any).writeBigUInt64LE(BigInt(lamportsToSend), 4);
-
-// Agar kisi environment mein writeBigUInt64LE na ho to manually 8 bytes shift karke bhi likh sakte ho,
-// lekin yahan simple rakhtay hain.
+(transferData as any).writeBigUInt64LE(BigInt(lamportsToSend), 4);
 
 // 2.4: Ab TransactionInstruction manually bana rahe hain:
 const transferInstruction = new TransactionInstruction({
@@ -96,13 +72,151 @@ const transferInstruction = new TransactionInstruction({
             isWritable: true, // uska balance bhi update hoga
         },
     ],
-    data, // yeh wahi 12-byte buffer hai: [u32 instruction_index][u64 lamports]
+    data: transferData, // [u32 instruction_index][u64 lamports]
 });
 
+// =============================
+// EXTRA: CreateAccount / Assign / Allocate manually
+// =============================
 
 /*
-3. Transaction Object:
+   1) CreateAccount (index = 0)
 
+   Layout (data):
+   [u32: CreateAccount(0)]
+   [u64: lamports]         // naye account ko kitne lamports dene hain
+   [u64: space]            // account data ke bytes ka size
+   [32 bytes: owner pubkey] // jis program ka yeh account owned hoga (e.g. SystemProgram, Serum, tumhara custom program, etc)
+
+   Keys:
+   - [0] from (payer/ funder): signer + writable
+   - [1] newAccount: signer + writable
+*/
+const CREATE_ACCOUNT_INDEX = 0;
+
+function createAccountInstruction(
+    fromPubkey: PublicKey,
+    newAccountPubkey: PublicKey,
+    lamports: number | bigint,
+    space: number | bigint,
+    owner: PublicKey,
+): TransactionInstruction {
+    // Data buffer length:
+    // 4 (u32 index) + 8 (u64 lamports) + 8 (u64 space) + 32 (Pubkey)
+    const buffer = Buffer.alloc(4 + 8 + 8 + 32);
+
+    // Instruction index
+    buffer.writeUInt32LE(CREATE_ACCOUNT_INDEX, 0);
+
+    // lamports (u64 LE)
+    (buffer as any).writeBigUInt64LE(BigInt(lamports), 4);
+
+    // space (u64 LE)
+    (buffer as any).writeBigUInt64LE(BigInt(space), 12);
+
+    // owner pubkey (32 bytes)
+    owner.toBuffer().copy(buffer, 20);
+
+    return new TransactionInstruction({
+        programId: SystemProgram.programId,
+        keys: [
+            {
+                pubkey: fromPubkey,
+                isSigner: true,  // funder must sign
+                isWritable: true,
+            },
+            {
+                pubkey: newAccountPubkey,
+                isSigner: true,  // new account keypair must sign
+                isWritable: true,
+            },
+        ],
+        data: buffer,
+    });
+}
+
+/*
+   2) Assign (index = 1)
+
+   Layout:
+   [u32: Assign(1)]
+   [32 bytes: new_owner_pubkey]
+
+   Ye instruction sirf kisi account ke "owner" program ko change karta hai.
+   Keys:
+   - [0] account: signer + writable
+*/
+const ASSIGN_INDEX = 1;
+
+function assignInstruction(
+    accountPubkey: PublicKey,
+    newOwner: PublicKey,
+): TransactionInstruction {
+    // 4 (index) + 32 (pubkey)
+    const buffer = Buffer.alloc(4 + 32);
+
+    // instruction index
+    buffer.writeUInt32LE(ASSIGN_INDEX, 0);
+
+    // new owner pubkey
+    newOwner.toBuffer().copy(buffer, 4);
+
+    return new TransactionInstruction({
+        programId: SystemProgram.programId,
+        keys: [
+            {
+                pubkey: accountPubkey,
+                isSigner: true,   // account owner ko sign karna hota hai
+                isWritable: true, // owner field change hogi
+            },
+        ],
+        data: buffer,
+    });
+}
+
+/*
+   3) Allocate (index = 8)
+
+   Layout:
+   [u32: Allocate(8)]
+   [u64: space]
+
+   Ye instruction sirf account ka "allocated data size" set karta hai
+   (ya badhata hai). Normal flow mein ye usually CreateAccount ke sath
+   ya program-specific account flows mein use hota hai.
+
+   Keys:
+   - [0] account: signer + writable
+*/
+const ALLOCATE_INDEX = 8;
+
+function allocateInstruction(
+    accountPubkey: PublicKey,
+    space: number | bigint,
+): TransactionInstruction {
+    const buffer = Buffer.alloc(4 + 8);
+
+    buffer.writeUInt32LE(ALLOCATE_INDEX, 0);
+    (buffer as any).writeBigUInt64LE(BigInt(space), 4);
+
+    return new TransactionInstruction({
+        programId: SystemProgram.programId,
+        keys: [
+            {
+                pubkey: accountPubkey,
+                isSigner: true,
+                isWritable: true,
+            },
+        ],
+        data: buffer,
+    });
+}
+
+// =============================
+// 3. Transaction Object
+// =============================
+
+/*
 Under the hood: Transaction ek container hai jo multiple TransactionInstruction objects hold kar sakta hai.
 
 Yeha Transaction ke andar abhi:
@@ -114,10 +228,45 @@ Payer, blockhash, signatures abhi set nahi huay.
 
 const transaction = new Transaction();
 
-// 3.1 Instruction
-transaction.add(transferInstruction);
+// Example: naya account bhi banayein aur usko fund bhi karein in one tx
+const newAccount = Keypair.generate();
 
-// 3.2 Recent blockhash set karna zaroori hai taaki transaction valid ho.
+// 3.1 CreateAccount instruction (payer -> newAccount)
+const createIx = createAccountInstruction(
+    payer.publicKey,
+    newAccount.publicKey,
+    0.2 * LAMPORTS_PER_SOL, // lamports for new account
+    64n,                    // space (bytes) - demo value
+    SystemProgram.programId // owner: SystemProgram (for demo; normally custom program)
+);
+
+// 3.2 Allocate instruction (increase space, purely for demo)
+const allocateIx = allocateInstruction(
+    newAccount.publicKey,
+    128n, // new space size
+);
+
+// 3.3 Assign instruction (change owner, demo: assign back to SystemProgram itself)
+const assignIx = assignInstruction(
+    newAccount.publicKey,
+    SystemProgram.programId,
+);
+
+// 3.4 Transfer instruction (manual transfer, jo upar banaya tha)
+// Yahan transfer abhi `payer -> recipient` hai. Agar tum chaho to
+// isko `payer -> newAccount` bhi bana sakte ho.
+transaction.add(
+    createIx,     // index = 0 (CreateAccount)
+    allocateIx,   // index = 8 (Allocate)
+    assignIx,     // index = 1 (Assign)
+    transferInstruction, // index = 2 (Transfer)
+);
+
+// NOTE: Yahan jo order hum add kar rahe hain, wahi execution order hoga.
+// Enum order alag, code order alag ho sakta hai; execution order sirf
+// transaction.add(...) ke sequence se decide hota hai.
+
+// 3.5 Recent blockhash set karna zaroori hai taaki transaction valid ho.
 const lastestBlockhash = await connection.getLatestBlockhash('confirmed');
 
 /*
@@ -132,7 +281,7 @@ Old API getRecentBlockhash() tha, ab getLatestBlockhash recommended hai.
 
 console.log('Recent blockhah:', lastestBlockhash.blockhash);
 
-// 3.3 Manually Transaction ke fields set karna
+// 3.6 Manually Transaction ke fields set karna
 transaction.recentBlockhash = lastestBlockhash.blockhash;
 transaction.feePayer = payer.publicKey;
 
@@ -152,7 +301,7 @@ transaction.signatures: abhi empty / placeholder hai.
 */
 
 // 4. Sign Transaction
-transaction.sign(payer);
+transaction.sign(payer, newAccount);
 
 /*
 
@@ -204,9 +353,3 @@ sendRawTransaction → RPC method sendTransaction call karta hai aur serialized 
 confirmTransaction → blockhash / blockheight ke context mein wait karta hai ke tx finalized / confirmed ho jaye.
 
 */
-
-
-
-
-
-
