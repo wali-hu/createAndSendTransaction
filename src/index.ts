@@ -30,17 +30,25 @@ if (!senderSecretKey || !receiverPublicKey) {
 const payer = Keypair.fromSecretKey(bs58.decode(senderSecretKey));
 const recipient = new PublicKey(receiverPublicKey);
 
-// =============================
 // 2. Manual SystemProgram.transfer
-// =============================
 
-// 2.1: Instruction index (discriminant) define karo.
+// 2.1: Define Instruction index (discriminant) .
 // System Program ke liye standard enum hota hai:
-// 0: CreateAccount
-// 1: Assign
-// 2: Transfer
-// 8: Allocate
-// etc...
+// enum SystemInstruction {
+//   CreateAccount = 0,
+//   Assign        = 1,
+//   Transfer      = 2,
+//   CreateAccountWithSeed = 3,
+//   AdvanceNonceAccount   = 4,
+//   WithdrawNonceAccount  = 5,
+//   InitializeNonceAccount = 6,
+//   AuthorizeNonceAccount  = 7,
+//   Allocate               = 8,
+//   AllocateWithSeed       = 9,
+//   AssignWithSeed         = 10,
+//   TransferWithSeed       = 11,
+//   ...
+// }
 const TRANSFER_INSTRUCTION_INDEX = 2;
 
 // 2.2: Transfer amount ko pure lamports mein calculate karo.
@@ -75,9 +83,9 @@ const transferInstruction = new TransactionInstruction({
     data: transferData, // [u32 instruction_index][u64 lamports]
 });
 
-// =============================
+
 // EXTRA: CreateAccount / Assign / Allocate manually
-// =============================
+
 
 /*
    1) CreateAccount (index = 0)
@@ -86,7 +94,7 @@ const transferInstruction = new TransactionInstruction({
    [u32: CreateAccount(0)]
    [u64: lamports]         // naye account ko kitne lamports dene hain
    [u64: space]            // account data ke bytes ka size
-   [32 bytes: owner pubkey] // jis program ka yeh account owned hoga (e.g. SystemProgram, Serum, tumhara custom program, etc)
+   [32 bytes: owner pubkey] // jis program ka yeh account owned hoga (e.g. SystemProgram, Serum, custom program, etc)
 
    Keys:
    - [0] from (payer/ funder): signer + writable
@@ -261,10 +269,6 @@ transaction.add(
     assignIx,     // index = 1 (Assign)
     transferInstruction, // index = 2 (Transfer)
 );
-
-// NOTE: Yahan jo order hum add kar rahe hain, wahi execution order hoga.
-// Enum order alag, code order alag ho sakta hai; execution order sirf
-// transaction.add(...) ke sequence se decide hota hai.
 
 // 3.5 Recent blockhash set karna zaroori hai taaki transaction valid ho.
 const lastestBlockhash = await connection.getLatestBlockhash('confirmed');
